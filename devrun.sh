@@ -1,3 +1,3 @@
 poetry install
 poetry run black .
-poetry run python run.py
+poetry run python run_engine.py
