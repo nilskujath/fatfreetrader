@@ -6,7 +6,7 @@ import sys
 import pandas as pd
 import os
 from collections import deque
-from queue import Queue
+from queue import Queue, Empty
 import threading
 
 
@@ -115,6 +115,7 @@ class TradingEngine:
         self.symbol = symbol
         self.incoming_market_data_queue = Queue()
         self._stop_event = threading.Event()
+        self._graceful_stop = False
 
         try:
             if self.mode == Modes.LIVE:
@@ -132,7 +133,7 @@ class TradingEngine:
     def _connect(self):
         while not self._stop_event.is_set():
             bar = self.data_handler.get_next_bar()
-            if bar is None or self._stop_event.is_set():
+            if bar is None:
                 logger.info(f"End of data reached for symbol: {self.symbol}.")
                 break
             self.incoming_market_data_queue.put(bar)
@@ -143,16 +144,35 @@ class TradingEngine:
         self.trade_thread.start()
 
     def _trade(self):
+        logger.info("Trade thread started.")
         while not self._stop_event.is_set():
-            if not self.incoming_market_data_queue.empty():
-                bar_event_message: BarEventMessage = (
-                    self.incoming_market_data_queue.get()
-                )
-                print(bar_event_message)
+            try:
+                bar_event_message = self.incoming_market_data_queue.get(timeout=1)
 
-    def stop(self):
-        logger.info("Stopping Trading Engine...")
+                if self._stop_event.is_set() and not self._graceful_stop:
+                    logger.info("Trade thread stopping immediately.")
+                    break
+
+                self.incoming_market_data_queue.task_done()
+                logger.debug(f"Processed bar event: {bar_event_message}")
+
+            except Empty:
+                if self._stop_event.is_set():
+                    logger.info("Trade thread exiting due to stop event.")
+                    break
+
+    def stop(self, graceful: bool = True):
+        logger.info(f"Stopping Trading Engine (graceful={graceful})...")
+        self._graceful_stop = graceful
         self._stop_event.set()
+
+        if not graceful:
+            while not self.incoming_market_data_queue.empty():
+                try:
+                    self.incoming_market_data_queue.get_nowait()
+                except Empty:
+                    break
+
         self.fetch_market_data_thread.join()
         self.trade_thread.join()
         logger.info("Trading Engine stopped.")
