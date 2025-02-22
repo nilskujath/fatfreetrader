@@ -147,7 +147,7 @@ class TradingEngine:
         logger.info("Trade thread started.")
         while not self._stop_event.is_set():
             try:
-                bar_event_message = self.incoming_market_data_queue.get(timeout=1)
+                bar_event_message = self.incoming_market_data_queue.get(timeout=0.02)
 
                 if self._stop_event.is_set() and not self._graceful_stop:
                     logger.info("Trade thread stopping immediately.")
