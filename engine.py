@@ -30,13 +30,39 @@ class BarEventMessage:
     symbol: str
 
 
+@dataclass
+class ProcessedBarEventMessage:
+    ts_event: pd.Timestamp
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    symbol: str
+
+    @classmethod
+    def from_bar(cls, bar: BarEventMessage, indicator_values: dict):
+        return cls(
+            ts_event=bar.ts_event,
+            open=bar.open,
+            high=bar.high,
+            low=bar.low,
+            close=bar.close,
+            volume=bar.volume,
+            symbol=bar.symbol,
+            **indicator_values,
+        )
+
+
 class Modes(Enum):
     LIVE = auto()
     REPLAY = auto()
 
 
 class Indicator(ABC):
-    def __init__(self):
+    @property
+    @abstractmethod
+    def name(self) -> str:
         pass
 
     @abstractmethod
@@ -54,6 +80,10 @@ class SimpleMovingAverage(Indicator):
         self.applied_on = applied_on
         self.values = deque(maxlen=self.period)
         self._current_value = np.nan
+
+    @property
+    def name(self) -> str:
+        return f"SMA_{self.period}_{self.applied_on}"
 
     def update(self, bar: BarEventMessage):
         self.values.append(getattr(bar, self.applied_on))
@@ -141,11 +171,13 @@ class TradingEngine:
             )
             sys.exit(1)
         logger.info(f"Trading Engine started in {mode.name} mode.")
-        self.mode = mode
-        self.symbol = symbol
+        self.mode: Modes = mode
+        self.symbol: str = symbol
         self.incoming_market_data_queue = Queue()
+        self.processed_market_data_queue = Queue()
+        self.indicators: dict = {}
         self._stop_event = threading.Event()
-        self._graceful_stop = False
+        self._graceful_stop: bool = False
 
         try:
             if self.mode == Modes.LIVE:
@@ -155,6 +187,9 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"Error: {e}", exc_info=False)
             sys.exit(1)
+
+    def add_indicator(self, indicator: Indicator):
+        pass
 
     def connect(self):
         self.fetch_market_data_thread = threading.Thread(target=self._fetch_market_data)
