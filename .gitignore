@@ -1,2 +1,3 @@
 .idea/
 csv_port/*.csv
+**/__pycache__/
