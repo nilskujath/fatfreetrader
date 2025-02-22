@@ -1,4 +1,4 @@
-from fatfreeengine import FatFreeEngine
+from fatfreeengine import FatFreeEngine, Mode
 
-engine = FatFreeEngine()
+engine = FatFreeEngine(Mode.REPLAY)
 engine.connect()
