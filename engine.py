@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import logging
 import sys
 import pandas as pd
+import numpy as np
 import os
 from collections import deque
 from queue import Queue, Empty
@@ -45,6 +46,22 @@ class Indicator(ABC):
     @abstractmethod
     def value(self):
         pass
+
+
+class SimpleMovingAverage(Indicator):
+    def __init__(self, period: int, applied_on: str):
+        self.period = period
+        self.applied_on = applied_on
+        self.values = deque(maxlen=self.period)
+        self._current_value = np.nan
+
+    def update(self, bar: BarEventMessage):
+        self.values.append(getattr(bar, self.applied_on))
+        if len(self.values) == self.period:
+            self._current_value = sum(self.values) / self.period
+
+    def value(self):
+        return self._current_value
 
 
 class DataHandler(ABC):
@@ -140,10 +157,15 @@ class TradingEngine:
             sys.exit(1)
 
     def connect(self):
-        self.fetch_market_data_thread = threading.Thread(target=self._connect)
+        self.fetch_market_data_thread = threading.Thread(target=self._fetch_market_data)
         self.fetch_market_data_thread.start()
 
-    def _connect(self):
+        self.process_market_data_thread = threading.Thread(
+            target=self._process_market_data
+        )
+        self.process_market_data_thread.start()
+
+    def _fetch_market_data(self):
         while not self._stop_event.is_set():
             bar = self.data_handler.get_next_bar()
             if bar is None:
@@ -152,11 +174,7 @@ class TradingEngine:
             self.incoming_market_data_queue.put(bar)
             logger.debug(f"Enqueued new bar event: {bar}")
 
-    def trade(self):
-        self.trade_thread = threading.Thread(target=self._trade)
-        self.trade_thread.start()
-
-    def _trade(self):
+    def _process_market_data(self):
         logger.info("Trade thread started.")
         while not self._stop_event.is_set():
             try:
@@ -187,5 +205,5 @@ class TradingEngine:
                     break
 
         self.fetch_market_data_thread.join()
-        self.trade_thread.join()
+        self.process_market_data_thread.join()
         logger.info("Trading Engine stopped.")
