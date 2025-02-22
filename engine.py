@@ -34,6 +34,19 @@ class Modes(Enum):
     REPLAY = auto()
 
 
+class Indicator(ABC):
+    def __init__(self):
+        pass
+
+    @abstractmethod
+    def update(self, bar: BarEventMessage):
+        pass
+
+    @abstractmethod
+    def value(self):
+        pass
+
+
 class DataHandler(ABC):
 
     @abstractmethod
