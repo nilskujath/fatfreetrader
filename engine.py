@@ -110,9 +110,12 @@ class ReplayDataHandler(DataHandler):
             if len(files) != 1:
                 raise FileNotFoundError(f"Expected 1 CSV, found {len(files)}.")
             self.path_to_csv = os.path.join("csv_port", files[0])
-            logger.info(f"Connecting to CSV: {self.path_to_csv}")
-
             self.symbol = symbol
+
+            logger.info(
+                f"Connected to CSV port: {self.path_to_csv} for symbol: {self.symbol}"
+            )
+
             self.data_iterator = pd.read_csv(
                 self.path_to_csv,
                 usecols=[
@@ -171,11 +174,11 @@ class TradingEngine:
                 f"Invalid mode: {mode}. Supported: {', '.join(m.name for m in Modes)}"
             )
             sys.exit(1)
-        logger.info(f"Trading Engine started in {mode.name} mode.")
+        logger.info(f"Trading Engine started in {mode.name} mode")
         self.mode: Modes = mode
         self.symbol: str = symbol
-        self.incoming_market_data_queue = Queue()
-        self.processed_market_data_queue = Queue()
+        self.incoming_bar_event_queue = Queue()
+        self.processed_bar_event_queue = Queue()
         self.indicators: dict = {}
         self._stop_event = threading.Event()
         self._graceful_stop: bool = False
@@ -198,49 +201,56 @@ class TradingEngine:
         logger.info(f"Added indicator: {indicator.name}")
 
     def connect(self):
-        self.fetch_market_data_thread = threading.Thread(target=self._fetch_market_data)
+        self.fetch_market_data_thread = threading.Thread(
+            target=self._fetch_market_data, name="FetchMarketDataThread"
+        )
         self.fetch_market_data_thread.start()
 
         self.process_market_data_thread = threading.Thread(
-            target=self._process_market_data
+            target=self._process_market_data, name="ProcessMarketDataThread"
         )
         self.process_market_data_thread.start()
 
     def _fetch_market_data(self):
+        logger.info(f"Thread started")
+
         while not self._stop_event.is_set():
             bar = self.data_handler.get_next_bar()
             if bar is None:
                 logger.info(f"End of data reached for symbol: {self.symbol}.")
                 break
-            self.incoming_market_data_queue.put(bar)
+            self.incoming_bar_event_queue.put(bar)
             logger.debug(f"Enqueued new bar event: {bar}")
 
     def _process_market_data(self):
-        logger.info("Processing market data thread started.")
+        logger.info(f"Thread started")
 
         while not self._stop_event.is_set():
             try:
-                bar_event = self.incoming_market_data_queue.get(timeout=0.02)
+                bar_event_message = self.incoming_bar_event_queue.get(timeout=0.02)
+                logger.debug(f"Received bar event: {bar_event_message}")
 
                 if self._stop_event.is_set() and not self._graceful_stop:
-                    logger.info("Processing thread stopping immediately.")
+                    logger.info(
+                        "Processing thread terminating immediately due to stop request (graceful=False)."
+                    )
                     break
 
-                self.incoming_market_data_queue.task_done()
+                self.incoming_bar_event_queue.task_done()
 
                 indicator_values = {}
 
                 for name, indicator in self.indicators.items():
-                    indicator.update(bar_event)
+                    indicator.update(bar_event_message)
                     indicator_values[name] = indicator.value()
 
                 processed_bar_event_message = ProcessedBarEventMessage.from_bar(
-                    bar_event, indicator_values
+                    bar_event_message, indicator_values
                 )
-                self.processed_market_data_queue.put(processed_bar_event_message)
+                self.processed_bar_event_queue.put(processed_bar_event_message)
 
                 logger.debug(
-                    f"Processed market data event: {processed_bar_event_message}"
+                    f"Enqueued processed bar event: {processed_bar_event_message}"
                 )
 
             except Empty:
@@ -248,15 +258,15 @@ class TradingEngine:
                     logger.info("Processing thread exiting due to stop event.")
                     break
 
-    def stop(self, graceful: bool = True):
+    def stop(self, graceful: bool = False):
         logger.info(f"Stopping Trading Engine (graceful={graceful})...")
         self._graceful_stop = graceful
         self._stop_event.set()
 
         if not graceful:
-            while not self.incoming_market_data_queue.empty():
+            while not self.incoming_bar_event_queue.empty():
                 try:
-                    self.incoming_market_data_queue.get_nowait()
+                    self.incoming_bar_event_queue.get_nowait()
                 except Empty:
                     break
 
