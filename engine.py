@@ -39,6 +39,7 @@ class ProcessedBarEventMessage:
     close: float
     volume: int
     symbol: str
+    indicators: dict  # Stores dynamic indicators
 
     @classmethod
     def from_bar(cls, bar: BarEventMessage, indicator_values: dict):
@@ -50,7 +51,7 @@ class ProcessedBarEventMessage:
             close=bar.close,
             volume=bar.volume,
             symbol=bar.symbol,
-            **indicator_values,
+            indicators=indicator_values,  # Store all indicator values in a dictionary
         )
 
 
@@ -189,7 +190,12 @@ class TradingEngine:
             sys.exit(1)
 
     def add_indicator(self, indicator: Indicator):
-        pass
+        if indicator.name in self.indicators:
+            logger.warning(f"Indicator {indicator.name} is already added. Ignoring.")
+            return
+
+        self.indicators[indicator.name] = indicator
+        logger.info(f"Added indicator: {indicator.name}")
 
     def connect(self):
         self.fetch_market_data_thread = threading.Thread(target=self._fetch_market_data)
@@ -210,21 +216,36 @@ class TradingEngine:
             logger.debug(f"Enqueued new bar event: {bar}")
 
     def _process_market_data(self):
-        logger.info("Trade thread started.")
+        logger.info("Processing market data thread started.")
+
         while not self._stop_event.is_set():
             try:
-                bar_event_message = self.incoming_market_data_queue.get(timeout=0.02)
+                bar_event = self.incoming_market_data_queue.get(timeout=0.02)
 
                 if self._stop_event.is_set() and not self._graceful_stop:
-                    logger.info("Trade thread stopping immediately.")
+                    logger.info("Processing thread stopping immediately.")
                     break
 
                 self.incoming_market_data_queue.task_done()
-                logger.debug(f"Processed bar event: {bar_event_message}")
+
+                indicator_values = {}
+
+                for name, indicator in self.indicators.items():
+                    indicator.update(bar_event)
+                    indicator_values[name] = indicator.value()
+
+                processed_bar_event_message = ProcessedBarEventMessage.from_bar(
+                    bar_event, indicator_values
+                )
+                self.processed_market_data_queue.put(processed_bar_event_message)
+
+                logger.debug(
+                    f"Processed market data event: {processed_bar_event_message}"
+                )
 
             except Empty:
                 if self._stop_event.is_set():
-                    logger.info("Trade thread exiting due to stop event.")
+                    logger.info("Processing thread exiting due to stop event.")
                     break
 
     def stop(self, graceful: bool = True):
